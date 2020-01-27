@@ -152,7 +152,6 @@ def get_possible_transformations():
 
 def get_random_transformation(dataset_description, name):
     transformation_dict = get_possible_transformations()
-    print()
     transformation_type = random.choice(list(transformation_dict.keys()))
 
     if transformation_dict[transformation_type]['min_columns'] == transformation_dict[transformation_type][
@@ -317,11 +316,8 @@ class Transformation:
         self.input_columns = input_columns
         self.output_columns = output_columns
         self.model = None
-        print('Transformation constructor', transformation_type, transformation_parameters, input_columns,
-              output_columns)
 
     def fit(self, df):
-        print('Transformation fit', df.columns.tolist())
         if self.transformation_type in ['quantile_scaler', 'standard_scaler', 'power_transform']:
             if self.transformation_type == 'quantile_scaler':
                 self.model = preprocessing.QuantileTransformer()
@@ -354,7 +350,6 @@ class Transformation:
 
     def transform(self, df):
         df = df.copy()
-        print('Transformation transform', df.columns.tolist())
         if self.transformation_type in ['quantile_scaler', 'standard_scaler', 'power_transform']:
             df[self.output_columns[0]] = self.model.transform(df[self.input_columns[0]].values.reshape(-1, 1))
 

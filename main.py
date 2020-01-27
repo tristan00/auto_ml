@@ -1,6 +1,7 @@
 import pandas as pd
 from dataset import DataSet
-from model import Model
+from model import get_n_random_models
+from common import path
 import random
 from sklearn import ensemble, metrics
 import uuid
@@ -9,153 +10,101 @@ import traceback
 import tqdm
 import math
 import json
+import time
+
+def get_metrics(truth, preds, problem_type):
+    if problem_type == 'regression':
+
+        try:
+            mae = metrics.mean_absolute_error(truth, preds)
+        except:
+            mae = None
+
+        try:
+            mse = metrics.mean_squared_error(truth, preds)
+        except:
+            mse = None
+
+        try:
+            msle = metrics.mean_squared_log_error(truth, preds)
+        except:
+            msle = None
+
+        try:
+            r2 = metrics.r2_score(truth, preds)
+        except:
+            r2 = None
+
+        return {'mean_absolute_error':mae,
+                'mean_squared_error':mse,
+                'r2_score':r2,
+                'mean_squared_log_error':msle}
+    else:
+        raise NotImplementedError
 
 
-# def get_regression_metrics(truth, preds):
-#     res_metric = metrics.mean_absolute_error(truth, preds)
+def run_data_pipeline_value_predictions(data_path, target, problem_type, ):
+    pass
 
 
+def run_random_pipelines(data_path, target, problem_type, num_of_data_pipelines = 2, num_of_model_parameters = 2, num_of_transformations = 10):
+    start_time = time.time()
+    run_id = str(uuid.uuid4().hex)
+    dataset_records = list()
+    model_records = list()
+    result_records = list()
+    datasets = list()
 
-def run_random_pipeline(data_path, target,
-                        min_num_of_feature_engineering_steps = 4,
-                        max_num_of_feature_engineering_steps = 12):
+    for i in range(num_of_data_pipelines):
+        d = DataSet()
+        d.load_data(data_path, target=target)
+        datasets.append(d)
+
+    print('data loaded')
+    for d in datasets:
+        d.apply_n_random_transformations(num_of_transformations)
+        dataset_records.append(d.transformation_record)
+
+    print('transformations loaded')
+    models = get_n_random_models(problem_type, num_of_model_parameters)
+    for m in models:
+        model_records.append(m.get_model_description())
+
     print('start')
-    data_manager = DataSet()
-    initial_description = data_manager.load_data(data_path = data_path, target = target, test_size=.3)
+    for d in datasets:
+        x_train, y_train = d.get_train_data()
+        x_val, y_val = d.get_validation_data()
+        x_test, y_test = d.get_test_data()
+        for m in models:
+            rec = {'model_id':m.model_id,
+                   'dataset_id':d.dataset_id,
+                   'problem_type':problem_type,
+                   'strategy': 'run_random_pipelines'}
+            try:
+                m.fit(x_train, y_train)
+                val_preds = m.predict(x_val)
+                rec['validation_metrics'] = get_metrics(y_val, val_preds, problem_type)
+                test_preds = m.predict(x_test)
+                rec['test_metrics'] = get_metrics(y_test, test_preds, problem_type)
+                rec['success'] = 1
+            except:
+                rec['success'] = 0
+                traceback.print_exc()
+            result_records.append(rec)
 
-    column_type_nan_fill_dict = dict()
-    for i in initial_description['columns'].keys():
-        if initial_description['columns'][i]['nan_count'] and not initial_description['columns'][i]['target']:
-            c_type = initial_description['columns'][i]['type']
-            column_type_nan_fill_dict[i] = random.choice(DataSet.column_type_nan_fill_dict[c_type])
-
-    print('filled nans')
-    column_type_transformation_dicts = dict()
-    for i in initial_description['columns'].keys():
-        if not initial_description['columns'][i]['target']:
-            c_type = initial_description['columns'][i]['type']
-            if c_type == 'string':
-                strategy = random.choice(DataSet.column_type_transformation_dict[c_type])
-                parameters = None
-                column_type_transformation_dicts[i] = {'column':i,
-                                                         'strategy':strategy,
-                                                         'parameters':parameters}
-
-    print('applied transformations')
-
-    data_manager.apply_nan_fill('train_test', column_type_nan_fill_dict)
-    data_manager.apply_transformations('train_test', column_type_transformation_dicts)
-
-    starting_columns = list()
-    num_of_feature_engineering_steps = random.randint(min_num_of_feature_engineering_steps, max_num_of_feature_engineering_steps)
-    feature_engineering_steps = dict()
-
-    latest_data_description = data_manager.get_data_description('train_test')
-    columns = [i for i in latest_data_description['columns'].keys() if not latest_data_description['columns'][i]['target']]
-
-    for step in tqdm.tqdm(list(range(num_of_feature_engineering_steps))):
-
-        if not starting_columns:
-            starting_columns = columns
-        strategy = random.choice(list(DataSet.feature_engineering_dict.keys()))
-
-        if DataSet.feature_engineering_dict[strategy]['min_columns'] == DataSet.feature_engineering_dict[strategy]['max_columns']:
-            num_of_chosen_columns = DataSet.feature_engineering_dict[strategy]['min_columns']
-        else:
-            num_of_chosen_columns = random.randint(DataSet.feature_engineering_dict[strategy]['min_columns'],
-                                                   DataSet.feature_engineering_dict[strategy]['max_columns'])
-
-        chosen_columns = random.sample(columns, num_of_chosen_columns)
-        next_steps = {'columns':chosen_columns,
-                     'strategy':strategy,
-                     'parameters':None}
-        feature_engineering_steps[step] = next_steps
-
-    data_manager.apply_feature_engineering('train_test', feature_engineering_steps)
-    print('applied feature engineering')
-
-    final_data_description =  data_manager.get_data_description('train_test')
-    chosen_columns = [i for i in final_data_description['columns'].keys() if not final_data_description['columns'][i]['target']]
-    chosen_columns = [i for i in chosen_columns if i not in starting_columns]
-    final_data_description =  data_manager.get_data_description('train_test', column_subset=chosen_columns)
-
-    data = data_manager.get_data('train_test')
-    train_df = data['train']
-    val_df = data['val']
-
-    train_x = train_df[chosen_columns]
-    train_y = train_df[target]
-    val_x = val_df[chosen_columns]
-    val_y = val_df[target]
-
-    train_x = train_x.replace(np.inf, np.nan)
-    train_x = train_x.replace(-np.inf, np.nan)
-    train_x = train_x.fillna(0)
-    val_x = val_x.replace(np.inf, np.nan)
-    val_x = val_x.replace(-np.inf, np.nan)
-    val_x = val_x.fillna(0)
-
-    model_parameters = dict()
-    model_choice = random.choice(list(Model.model_param_dict.keys()))
-    for p, c in Model.model_param_dict[model_choice].items():
-        if isinstance(c, list):
-            model_parameters[p] = random.choice(c)
-        if isinstance(c, tuple):
-            if isinstance(c[0], float):
-                model_parameters[p] = random.random() * (c[1] - c[0])
-            elif isinstance(c[0], int):
-                model_parameters[p] = random.randint(c[0], c[1])
-            else:
-                raise NotImplementedError
-
-    model_parameters['model_type'] = model_choice
-    model = Model(model_parameters)
-    print('fitting model')
-    model.fit(train_x, train_y)
-    print('model fit')
-
-    preds = model.predict(val_x)
-    res_metric = metrics.mean_squared_log_error(val_y, preds)
-    print(res_metric)
-
-    # json.dumps(column_type_nan_fill_dict)
-    # json.dumps(column_type_transformation_dicts)
-    # json.dumps(feature_engineering_steps)
-    # # print(initial_description)
-    # json.dumps(initial_description)
-    # json.dumps(final_data_description)
-    # json.dumps(model_parameters)
-
-    return {'column_type_nan_fill_dict': json.dumps(column_type_nan_fill_dict),
-           'column_type_transformation_dicts': json.dumps(column_type_transformation_dicts),
-           'feature_engineering_steps': json.dumps(feature_engineering_steps),
-            'initial_description': json.dumps(initial_description),
-            'final_data_description': json.dumps(final_data_description),
-            'model_parameters': json.dumps(model_parameters),
-           'res_metric': res_metric}
+    with open('{path}/{run_id}.json'.format(path=path, run_id=run_id), 'w') as f:
+        json.dump({'models': model_records,
+                   'datasets': dataset_records,
+                   'results': result_records,
+                   'runtime': time.time() - start_time}, f)
 
 
 if __name__ == '__main__':
-    housing_prices_dataset = {'data_path': '/media/td/Samsung_T5/ml_problems/housing_prices/train.csv',
-                   'target': 'SalePrice',
-                   'metric': 'rmlse'}
-    allstate_dataset = {'data_path': '/media/td/Samsung_T5/ml_problems/allstate_severity/train_sample.csv',
-                   'target': 'loss',
-                   'metric': 'mae'}
-    gpu_dataset = {'data_path': '/media/td/Samsung_T5/ml_problems/gpu/gpu_sample.csv',
-                   'target': 'target',
-                   'metric': 'mae'}
-
-    dataset = housing_prices_dataset
-    run_id = str(uuid.uuid4())
-    result_list = list()
-    for i in range(10000):
-        try:
-            print('iteration {}'.format(i))
-            res = run_random_pipeline(dataset['data_path'],
-                         dataset['target'])
-            res.update(dataset)
-            result_list.append(res)
-            pd.DataFrame.from_dict(result_list).to_csv('/media/td/Samsung_T5/ml_problems/parameter_search/{}.csv'.format(run_id), index = False, sep = '|')
-        except:
-            traceback.print_exc()
+    for i in range(1000):
+        print('iteration {}'.format(i))
+        run_random_pipelines('/home/td/Documents/datasets/housing_prices/train.csv',
+                             'SalePrice',
+                             'regression',
+                             num_of_data_pipelines=20,
+                             num_of_model_parameters=20,
+                             num_of_transformations=10)

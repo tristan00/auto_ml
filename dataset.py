@@ -21,10 +21,9 @@ def clean_text(s):
 
 def get_dataset_description(df, target, original_columns):
     dataset_profile = dict()
-    dataset_profile['size'] = {
-        'rows': df.shape[0],
-        'columns': df.shape[1],
-    }
+
+    feature_col_counter = 0
+
 
     if df[target].dtype in pd_numerics:
         target_type = 'numeric'
@@ -43,14 +42,18 @@ def get_dataset_description(df, target, original_columns):
             dataset_profile['columns'][i]['original_column'] = 1
         else:
             dataset_profile['columns'][i]['original_column'] = 0
+            feature_col_counter += 1
 
         if df[i].dtype in pd_numerics:
             dataset_profile['columns'][i]['type'] = 'numeric'
             dataset_profile['columns'][i]['nan_count'] = int(df[i].isna().sum())
             dataset_profile['columns'][i]['mean'] = float(df[i].mean())
+            dataset_profile['columns'][i]['min'] = float(df[i].min())
+            dataset_profile['columns'][i]['max'] = float(df[i].max())
             dataset_profile['columns'][i]['median'] = float(df[i].median())
             dataset_profile['columns'][i]['skew'] = float(df[i].skew())
             dataset_profile['columns'][i]['nunique'] = int(df[i].nunique())
+            dataset_profile['columns'][i]['perc_of_values_mode'] = df[i].value_counts(normalize=True, dropna=False).iloc[0]
             if target_type == 'numeric':
                 _, _, r_value, _, _ = stats.linregress(df[i], df[target])
                 dataset_profile['columns'][i]['target_r_value'] = r_value
@@ -61,6 +64,14 @@ def get_dataset_description(df, target, original_columns):
             dataset_profile['columns'][i]['type'] = 'string'
             dataset_profile['columns'][i]['nan_count'] = int(df[i].isna().sum())
             dataset_profile['columns'][i]['nunique'] = int(df[i].nunique())
+            dataset_profile['columns'][i]['perc_of_values_mode'] = df[i].value_counts(normalize=True, dropna=False).iloc[0]
+
+    dataset_profile['general'] = {
+        'rows': df.shape[0],
+        'columns': df.shape[1],
+        'feature_columns':feature_col_counter
+    }
+
 
     return dataset_profile
 
@@ -74,8 +85,8 @@ class DataSet:
 
     def load_data(self, data_path,
                   data_format='csv',
-                  validation_size=.20,
-                  test_size=.20,
+                  validation_size=.2,
+                  test_size=.2,
                   csv_sep=',',
                   target=None,
                   nrows=None):
@@ -158,6 +169,7 @@ class DataSet:
         self.validation_data = transformation_obj.transform(self.validation_data)
         self.test_data = transformation_obj.transform(self.test_data)
         self.output_columns.extend(transformation_obj.output_columns)
+        self.output_columns = sorted(list(set(self.output_columns)))
 
         input_column_descriptions = list()
         for i in transformation_obj.input_columns:
@@ -175,6 +187,11 @@ class DataSet:
             transformation_objs = get_n_random_transformations(dataset_description, 1)
             transformation_obj = transformation_objs[0]
             self.apply_transformation(transformation_obj, dataset_description)
+
+    def get_n_random_transformations(self, n):
+        dataset_description = get_dataset_description(self.train_data, self.target, self.initial_columns)
+        transformation_objs = get_n_random_transformations(dataset_description, n)
+        return transformation_objs
 
     def get_train_data(self):
         return self.train_data[self.output_columns], self.train_data[self.target]

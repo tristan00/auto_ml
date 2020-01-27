@@ -7,6 +7,7 @@ numerical_sentinel_pos = -999999999
 
 string_sentinel = '-999999999'
 other_category_filler = 'other_category_filler'
+path = '/home/td/Documents/datasets/auto_ml'
 
 
 def clean_text(s):
