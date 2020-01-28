@@ -8,6 +8,7 @@ import json
 from transformation import get_n_random_transformations
 import time
 import uuid
+import copy
 
 pd_numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
 numerical_sentinel = -999999999
@@ -29,107 +30,15 @@ def get_col_description_dict(s):
         d['median'] = float(s.median())
         d['skew'] = float(s.skew())
         d['perc_unique'] = (int(s.nunique()) - 1)/max(s.shape)
-        d['perc_of_values_mode'] = s.value_counts(normalize=True, dropna=False).iloc[0]
-        d['mode'] = s.value_counts(normalize=True, dropna=False).index[0]
-        d['kurtosis'] = stats.kurtosis(s.dropna().tolist())
+        d['perc_of_values_mode'] = float(s.value_counts(normalize=True, dropna=False).iloc[0])
+        d['mode'] = float(s.value_counts(normalize=True, dropna=False).index[0])
+        d['kurtosis'] = float(stats.kurtosis(s.dropna().tolist()))
     else:
         d['nan_count'] = int(s.isna().sum())
         d['nunique'] = int(s.nunique())
-        d['perc_of_values_mode'] = s.value_counts(normalize=True, dropna=False).iloc[0]
+        d['perc_of_values_mode'] = float(s.value_counts(normalize=True, dropna=False).iloc[0])
         d['mode'] = s.value_counts(normalize=True, dropna=False).index[0]
     return d
-
-
-def get_dataset_description(df, target, original_columns):
-    dataset_profile = dict()
-
-    if df[target].dtype in pd_numerics:
-        target_type = 'numeric'
-    else:
-        target_type = 'string'
-
-    dataset_profile['columns'] = dict()
-
-    if temp_col in df.columns:
-        df = df.drop(temp_col, axis=1)
-
-    df_columns = df.columns.tolist()
-    for i in df_columns:
-        dataset_profile['columns'][i] = dict()
-        if i == target:
-            dataset_profile['columns'][i]['target'] = 1
-        else:
-            dataset_profile['columns'][i]['target'] = 0
-
-        if i in original_columns:
-            dataset_profile['columns'][i]['original_column'] = 1
-        else:
-            dataset_profile['columns'][i]['original_column'] = 0
-
-        if df[i].dtype in pd_numerics:
-            dataset_profile['columns'][i]['type'] = 'numeric'
-            dataset_profile['columns'][i].update(get_col_description_dict(df[i]))
-            dataset_profile['columns'][i]['perc_of_values_mode'] = df[i].value_counts(normalize=True, dropna=False).iloc[0]
-
-            if target_type == 'numeric':
-                slope, intercept, r_value, p_value, std_err = stats.linregress(df[i], df[target])
-                dataset_profile['columns'][i]['target_slope'] = slope
-                dataset_profile['columns'][i]['target_intercept'] = intercept
-                dataset_profile['columns'][i]['target_r_value'] = r_value
-                dataset_profile['columns'][i]['target_p_value'] = p_value
-                dataset_profile['columns'][i]['target_std_err'] = std_err
-
-            else:
-                unique_values = set(df[target])
-                value_mapping = {k: n for n, k in enumerate(unique_values)}
-                df[temp_col] = df[target].replace(value_mapping).astype(int)
-                subsets = [df[df[temp_col] == temp_target_value][i].tolist()
-                           for temp_target_value in list(value_mapping.values())]
-                f_stat, p_value = stats.f_oneway(*subsets)
-                dataset_profile['columns'][i]['target_p_value'] = p_value
-                dataset_profile['columns'][i]['target_f_stat'] = f_stat
-
-        else:
-            dataset_profile['columns'][i]['type'] = 'string'
-            dataset_profile['columns'][i].update(get_col_description_dict(df[i]))
-
-            if target_type == 'numeric':
-                unique_values = set(df[i])
-                value_mapping = {k: n for n, k in enumerate(unique_values)}
-                df[temp_col] = df[i].replace(value_mapping).astype(int)
-                subsets = [df[df[temp_col] == temp_target_value][target].tolist() for temp_target_value in list(value_mapping.values())]
-                f_stat, p_value = stats.f_oneway(*subsets)
-                dataset_profile['columns'][i]['target_p_value'] = p_value
-                dataset_profile['columns'][i]['target_f_stat'] = f_stat
-
-            else:
-                unique_values_col = set(df[i])
-                unique_values_target = set(df[target])
-
-                value_mapping_col = {k: n + 1 for n, k in enumerate(unique_values_col)}
-                value_mapping_target = {k: n + 1 for n, k in enumerate(unique_values_target)}
-
-                temp_col_s = df[i].replace(value_mapping_col).astype(int).tolist()
-                temp_target_s = df[target].replace(value_mapping_target).astype(int).tolist()
-
-                chi_stat, p_value = stats.chisquare(temp_col_s, temp_target_s)
-                dataset_profile['columns'][i]['target_p_value'] = p_value
-                dataset_profile['columns'][i]['target_chi_stat'] = chi_stat
-
-    original_columns_df = pd.DataFrame.from_dict([i for i in list(dataset_profile['columns'].values()) if i['original_column'] == 0])
-
-    dataset_profile['general'] = {
-        'rows': df.shape[0],
-        'columns': df.shape[1],
-        'feature_columns_size':original_columns_df.shape[0]}
-
-    if original_columns_df.shape[0] > 0:
-        for i in original_columns_df.columns.tolist():
-            if original_columns_df[i].dtype in pd_numerics and original_columns_df[i].nunique() > 1:
-                col_d = get_col_description_dict(original_columns_df[i])
-                for k, v in col_d.items():
-                    dataset_profile['general']['{0}_{1}'.format(i, k)] = v
-    return dataset_profile
 
 
 class DataSet:
@@ -138,6 +47,8 @@ class DataSet:
         self.transformation_record = list()
         self.output_columns = list()
         self.dataset_id = str(uuid.uuid4().hex)
+        self.dataset_description = dict()
+        self.dataset_description['columns'] = dict()
 
     def load_data(self, data_path,
                   data_format='csv',
@@ -172,25 +83,119 @@ class DataSet:
             self.test_data = self.raw_data.loc[test_indices].copy()
 
             tmp_columns = self.train_data.columns.tolist()
-            temp_dataset_description = get_dataset_description(self.train_data, self.target,
-                                                               tmp_columns)
 
-            self.apply_nan_fill(temp_dataset_description)
+
+            self.apply_nan_fill()
 
             self.initial_columns = self.train_data.columns.tolist()
-            self.initial_dataset_description = get_dataset_description(self.train_data, self.target,
-                                                                       self.initial_columns)
-            print(self.initial_dataset_description)
+            self.get_dataset_description()
 
         else:
             raise NotImplementedError
 
-    def apply_nan_fill(self, dataset_description):
-        for column_name, column_dict in dataset_description['columns'].items():
-            if column_dict['target'] or not column_dict['nan_count']:
+    def get_dataset_description(self):
+        if self.train_data[self.target].dtype in pd_numerics:
+            target_type = 'numeric'
+        else:
+            target_type = 'string'
+
+
+        # self.dataset_description['columns'] = dict()
+
+        if temp_col in self.train_data.columns:
+            self.train_data = self.train_data.drop(temp_col, axis=1)
+
+        df_columns = self.train_data.columns.tolist()
+        for i in df_columns:
+            if i in self.dataset_description.get('columns', dict()).keys():
                 continue
 
-            if column_dict['type'] == 'numeric':
+            self.dataset_description['columns'][i] = dict()
+            if i == self.target:
+                self.dataset_description['columns'][i]['target'] = 1
+            else:
+                self.dataset_description['columns'][i]['target'] = 0
+
+            if i in self.initial_columns:
+                self.dataset_description['columns'][i]['original_column'] = 1
+            else:
+                self.dataset_description['columns'][i]['original_column'] = 0
+
+            if self.train_data[i].dtype in pd_numerics:
+                self.dataset_description['columns'][i]['type'] = 'numeric'
+                self.dataset_description['columns'][i].update(get_col_description_dict(self.train_data[i]))
+                self.dataset_description['columns'][i]['perc_of_values_mode'] = \
+                self.train_data[i].value_counts(normalize=True, dropna=False).iloc[0]
+
+                if target_type == 'numeric':
+                    slope, intercept, r_value, p_value, std_err = stats.linregress(self.train_data[i], self.train_data[self.target])
+                    self.dataset_description['columns'][i]['target_slope'] = slope
+                    self.dataset_description['columns'][i]['target_intercept'] = intercept
+                    self.dataset_description['columns'][i]['target_r_value'] = r_value
+                    self.dataset_description['columns'][i]['target_p_value'] = p_value
+                    self.dataset_description['columns'][i]['target_std_err'] = std_err
+
+                else:
+                    unique_values = set(self.train_data[self.target])
+                    value_mapping = {k: n for n, k in enumerate(unique_values)}
+                    self.train_data[temp_col] = self.train_data[self.target].replace(value_mapping).astype(int)
+                    subsets = [self.train_data[self.train_data[temp_col] == temp_target_value][i].tolist()
+                               for temp_target_value in list(value_mapping.values())]
+                    f_stat, p_value = stats.f_oneway(*subsets)
+                    self.dataset_description['columns'][i]['target_p_value'] = p_value
+                    self.dataset_description['columns'][i]['target_f_stat'] = f_stat
+
+            else:
+                self.dataset_description['columns'][i]['type'] = 'string'
+                self.dataset_description['columns'][i].update(get_col_description_dict(self.train_data[i]))
+
+                if target_type == 'numeric':
+                    unique_values = set(self.train_data[i])
+                    value_mapping = {k: n for n, k in enumerate(unique_values)}
+                    self.train_data[temp_col] = self.train_data[i].replace(value_mapping).astype(int)
+                    subsets = [self.train_data[self.train_data[temp_col] == temp_target_value][self.target].tolist() for temp_target_value in
+                               list(value_mapping.values())]
+                    f_stat, p_value = stats.f_oneway(*subsets)
+                    self.dataset_description['columns'][i]['target_p_value'] = p_value
+                    self.dataset_description['columns'][i]['target_f_stat'] = f_stat
+
+                else:
+                    unique_values_col = set(self.train_data[i])
+                    unique_values_target = set(self.train_data[self.target])
+
+                    value_mapping_col = {k: n + 1 for n, k in enumerate(unique_values_col)}
+                    value_mapping_target = {k: n + 1 for n, k in enumerate(unique_values_target)}
+
+                    temp_col_s = self.train_data[i].replace(value_mapping_col).astype(int).tolist()
+                    temp_target_s = self.train_data[self.target].replace(value_mapping_target).astype(int).tolist()
+
+                    chi_stat, p_value = stats.chisquare(temp_col_s, temp_target_s)
+                    self.dataset_description['columns'][i]['target_p_value'] = p_value
+                    self.dataset_description['columns'][i]['target_chi_stat'] = chi_stat
+
+        original_columns_df = pd.DataFrame.from_dict(
+            [i for i in list(self.dataset_description['columns'].values()) if i['original_column'] == 0])
+        self.dataset_description['general'] = {
+            'rows': self.train_data.shape[0],
+            'columns': self.train_data.shape[1],
+            'feature_columns_size': original_columns_df.shape[0]}
+
+        if original_columns_df.shape[0] > 0:
+            for i in original_columns_df.columns.tolist():
+                if original_columns_df[i].dtype in pd_numerics and original_columns_df[i].nunique() > 1:
+                    col_d = get_col_description_dict(original_columns_df[i])
+                    for k, v in col_d.items():
+                        self.dataset_description['general']['{0}_{1}'.format(i, k)] = v
+        self.dataset_description =  copy.deepcopy(self.dataset_description)
+
+
+    def apply_nan_fill(self):
+        columns = self.train_data.columns.tolist()
+        for column_name in columns:
+            if column_name == self.target or not (self.train_data[column_name].isna().sum() or self.validation_data[column_name].isna().sum() or self.test_data[column_name].isna().sum()):
+                continue
+
+            if self.train_data[column_name].dtype in pd_numerics:
                 col_max = self.train_data[column_name].max() + 1
                 col_min = self.train_data[column_name].min() - 1
 
@@ -205,7 +210,7 @@ class DataSet:
                 self.test_data['{}_nan_max'.format(column_name)] = self.test_data[column_name].fillna(col_max)
                 self.test_data['{}_nan_min'.format(column_name)] = self.test_data[column_name].fillna(col_min)
 
-            elif column_dict['type'] == 'string':
+            else:
                 self.train_data['{}_nan_sentinel'.format(column_name)] = self.train_data[column_name].fillna(
                     string_sentinel)
                 self.validation_data['{}_nan_sentinel'.format(column_name)] = self.validation_data[column_name].fillna(
@@ -213,14 +218,11 @@ class DataSet:
                 self.test_data['{}_nan_sentinel'.format(column_name)] = self.test_data[column_name].fillna(
                     string_sentinel)
 
-            else:
-                raise NotImplementedError
-
             self.train_data = self.train_data.drop(column_name, axis=1)
             self.validation_data = self.validation_data.drop(column_name, axis=1)
             self.test_data = self.test_data.drop(column_name, axis=1)
 
-    def apply_transformation(self, transformation_obj, dataset_description):
+    def apply_transformation(self, transformation_obj):
         transformation_obj.fit(self.train_data)
         self.train_data = transformation_obj.transform(self.train_data)
         self.validation_data = transformation_obj.transform(self.validation_data)
@@ -230,10 +232,10 @@ class DataSet:
 
         input_column_descriptions = list()
         for i in transformation_obj.input_columns:
-            input_column_descriptions.append(dataset_description['columns'][i])
+            input_column_descriptions.append(self.dataset_description['columns'][i])
 
-        self.transformation_record.append({'input_column_descriptions': input_column_descriptions,
-                                           'general_description': dataset_description['general'],
+        self.transformation_record.append({'input_column_descriptions': copy.deepcopy(input_column_descriptions),
+                                           'general_description': copy.deepcopy(self.dataset_description['general']),
                                            'dataset_id': self.dataset_id,
                                            'datapath': self.data_path,
                                            'transformation_type': transformation_obj.transformation_type,
@@ -241,14 +243,13 @@ class DataSet:
 
     def apply_n_random_transformations(self, n):
         for iteration in range(n):
-            dataset_description = get_dataset_description(self.train_data, self.target, self.initial_columns)
-            print(dataset_description)
-            transformation_objs = get_n_random_transformations(dataset_description, 1)
+            self.get_dataset_description()
+            transformation_objs = get_n_random_transformations(self.dataset_description, 1)
             transformation_obj = transformation_objs[0]
-            self.apply_transformation(transformation_obj, dataset_description)
+            self.apply_transformation(transformation_obj)
 
     def get_n_random_transformations(self, n):
-        dataset_description = get_dataset_description(self.train_data, self.target, self.initial_columns)
+        dataset_description = self.get_dataset_description()
         transformation_objs = get_n_random_transformations(dataset_description, n)
         return transformation_objs
 

@@ -11,12 +11,22 @@ from common import pick_parameter, string_sentinel
 def get_possible_transformations():
     transformations_dict = dict()
     transformations_dict['sum'] = {'min_columns': 2,
-                                   'max_columns': 2,
+                                   'max_columns': 4,
+                                   'input_type': ['numeric'],
+                                   'output_columns': 1,
+                                   'parameters': list()}
+    transformations_dict['var'] = {'min_columns': 2,
+                                   'max_columns': 4,
+                                   'input_type': ['numeric'],
+                                   'output_columns': 1,
+                                   'parameters': list()}
+    transformations_dict['median'] = {'min_columns': 2,
+                                   'max_columns': 4,
                                    'input_type': ['numeric'],
                                    'output_columns': 1,
                                    'parameters': list()}
     transformations_dict['product'] = {'min_columns': 2,
-                                       'max_columns': 2,
+                                       'max_columns': 4,
                                        'input_type': ['numeric'],
                                        'output_columns': 1,
                                        'parameters': list()}
@@ -26,23 +36,23 @@ def get_possible_transformations():
                                           'output_columns': 1,
                                           'parameters': list()}
     transformations_dict['min'] = {'min_columns': 2,
-                                   'max_columns': 2,
+                                   'max_columns': 4,
                                    'input_type': ['numeric'],
                                    'output_columns': 1,
                                    'parameters': []}
     transformations_dict['max'] = {'min_columns': 2,
-                                   'max_columns': 2,
+                                   'max_columns': 4,
                                    'input_type': ['numeric'],
                                    'output_columns': 1,
                                    'parameters': []}
 
-    transformations_dict['identity'] = {'min_columns': 2,
-                                        'max_columns': 2,
+    transformations_dict['identity'] = {'min_columns': 1,
+                                        'max_columns': 1,
                                         'input_type': ['numeric'],
                                         'output_columns': 1,
                                         'parameters': []}
     transformations_dict['pca'] = {'min_columns': 2,
-                                   'max_columns': 4,
+                                   'max_columns': 8,
                                    'input_type': ['numeric'],
                                    'output_columns': 'input',
                                    'parameters': []}
@@ -353,7 +363,7 @@ class Transformation:
         if self.transformation_type in ['quantile_scaler', 'standard_scaler', 'power_transform']:
             df[self.output_columns[0]] = self.model.transform(df[self.input_columns[0]].values.reshape(-1, 1))
 
-        elif self.transformation_type in ['sum', 'product', 'difference', 'min', 'max', 'identity']:
+        elif self.transformation_type in ['sum', 'product', 'difference', 'min', 'max', 'identity', 'var', 'median']:
             if self.transformation_type == 'sum':
                 df[self.output_columns[0]] = df[self.input_columns].sum(axis=1).values
             elif self.transformation_type == 'product':
@@ -366,6 +376,10 @@ class Transformation:
                 df[self.output_columns[0]] = df[self.input_columns].max(axis=1).values
             elif self.transformation_type == 'identity':
                 df[self.output_columns[0]] = df[self.input_columns[0]].copy()
+            elif self.transformation_type == 'var':
+                df[self.output_columns[0]] = df[self.input_columns].var(axis=1).values
+            elif self.transformation_type == 'median':
+                df[self.output_columns[0]] = df[self.input_columns].median(axis=1).values
             else:
                 raise NotImplementedError
 

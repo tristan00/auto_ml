@@ -21,7 +21,7 @@ def run_data_pipeline_value_predictions(data_path, target, problem_type,
                                         num_of_random_iterations = 100,
                                         num_of_data_pipelines = 10,
                                         num_of_model_parameters = 10,
-                                        num_of_transformations = 40,
+                                        prob_of_ending_transformations = .1,
                                         epsilon_decay = .1,
                                         starting_epsilon = .95,
                                         iteration_size = 100,
@@ -48,18 +48,22 @@ def run_data_pipeline_value_predictions(data_path, target, problem_type,
         If iteration does not improve on previous iterations, exit.
 
     '''
+
+
     # match dataset of
     if not run_id:
         run_id = str(uuid.uuid4().hex)
 
-    for _ in range(num_of_random_iterations):
-        run_random_pipelines(data_path, target, problem_type, run_id=run_id,
-                             num_of_data_pipelines=num_of_data_pipelines,
-                             num_of_model_parameters=num_of_model_parameters,
-                             num_of_transformations=num_of_transformations)
+    # for _ in range(num_of_random_iterations):
+    #     run_random_pipelines(data_path, target, problem_type, run_id=run_id,
+    #                          num_of_data_pipelines=num_of_data_pipelines,
+    #                          num_of_model_parameters=num_of_model_parameters,
+    #                          prob_of_ending_transformations=prob_of_ending_transformations)
+    with open('/home/td/Documents/datasets/auto_ml/1.json', 'r') as f:
+        past_results = json.load(f)
 
 
-def run_random_pipelines(data_path, target, problem_type, run_id = None, iteration_num = None, num_of_data_pipelines = 10, num_of_model_parameters = 10, num_of_transformations = 10):
+def run_random_pipelines(data_path, target, problem_type, run_id = None, iteration_num = None, num_of_data_pipelines = 10, num_of_model_parameters = 10, prob_of_ending_transformations = .1):
     start_time = time.time()
     if not run_id:
         run_id = str(uuid.uuid4().hex)
@@ -75,8 +79,11 @@ def run_random_pipelines(data_path, target, problem_type, run_id = None, iterati
 
     print('data loaded')
     for d in datasets:
-        d.apply_n_random_transformations(num_of_transformations)
-        dataset_records.append(d.transformation_record)
+        while True:
+            d.apply_n_random_transformations(1)
+            dataset_records.append(d.transformation_record)
+            if random.random() < prob_of_ending_transformations:
+                break
 
     print('transformations loaded')
     models = get_n_random_models(problem_type, num_of_model_parameters)
@@ -120,10 +127,10 @@ def run_random_pipelines(data_path, target, problem_type, run_id = None, iterati
 
 if __name__ == '__main__':
     for i in range(1000):
-        print('iteration {}'.format(i))
         run_random_pipelines('/home/td/Documents/datasets/housing_prices/train.csv',
                              'SalePrice',
                              'regression',
-                             num_of_data_pipelines=20,
-                             num_of_model_parameters=20,
-                             num_of_transformations=10)
+                             num_of_data_pipelines=10,
+                             num_of_model_parameters=10,
+                             prob_of_ending_transformations=.1,
+                             run_id = 1)
