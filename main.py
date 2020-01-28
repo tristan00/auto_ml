@@ -1,7 +1,7 @@
 import pandas as pd
 from dataset import DataSet
 from model import get_n_random_models
-from common import path
+from common import path, get_metrics
 import random
 from sklearn import ensemble, metrics
 import uuid
@@ -11,45 +11,58 @@ import tqdm
 import math
 import json
 import time
-
-def get_metrics(truth, preds, problem_type):
-    if problem_type == 'regression':
-
-        try:
-            mae = metrics.mean_absolute_error(truth, preds)
-        except:
-            mae = None
-
-        try:
-            mse = metrics.mean_squared_error(truth, preds)
-        except:
-            mse = None
-
-        try:
-            msle = metrics.mean_squared_log_error(truth, preds)
-        except:
-            msle = None
-
-        try:
-            r2 = metrics.r2_score(truth, preds)
-        except:
-            r2 = None
-
-        return {'mean_absolute_error':mae,
-                'mean_squared_error':mse,
-                'r2_score':r2,
-                'mean_squared_log_error':msle}
-    else:
-        raise NotImplementedError
+import os
 
 
-def run_data_pipeline_value_predictions(data_path, target, problem_type, ):
-    pass
 
 
-def run_random_pipelines(data_path, target, problem_type, num_of_data_pipelines = 2, num_of_model_parameters = 2, num_of_transformations = 10):
+def run_data_pipeline_value_predictions(data_path, target, problem_type,
+                                        run_id = None,
+                                        num_of_random_iterations = 100,
+                                        num_of_data_pipelines = 10,
+                                        num_of_model_parameters = 10,
+                                        num_of_transformations = 40,
+                                        epsilon_decay = .1,
+                                        starting_epsilon = .95,
+                                        iteration_size = 100,
+                                        iteration_early_stopping_patience = 1,
+                                        transformation_to_query = 1000
+                                        ):
+    '''
+    Algorithm:
+
+    Run a fully random set of transformation pipelines and model parameters to create initial dataset.
+    For each iteration:
+        Read records, fit a transformation that creates fixed size tabular output given for the model parameters, current feature description and transformation description.
+        Model parameters + current feature description are the state,the transformation description is the action.
+        Train a model to estimate a loss metric given a state and action.
+        For each iteration step:
+            Rank model parameters based on avg past results + time decay
+            Pick new model param: Epsilon prob of picking a random model parameter. Else take one of the best model parameters so far.
+            Load fresh dataset.
+            For each transformation:
+                Query n random possible transformations.
+                Pick transformation: Epsilon prob of picking a random transformation from this set. Else use model to rank transformations and pick best one.
+
+        Decay epsilon.
+        If iteration does not improve on previous iterations, exit.
+
+    '''
+    # match dataset of
+    if not run_id:
+        run_id = str(uuid.uuid4().hex)
+
+    for _ in range(num_of_random_iterations):
+        run_random_pipelines(data_path, target, problem_type, run_id=run_id,
+                             num_of_data_pipelines=num_of_data_pipelines,
+                             num_of_model_parameters=num_of_model_parameters,
+                             num_of_transformations=num_of_transformations)
+
+
+def run_random_pipelines(data_path, target, problem_type, run_id = None, iteration_num = None, num_of_data_pipelines = 10, num_of_model_parameters = 10, num_of_transformations = 10):
     start_time = time.time()
-    run_id = str(uuid.uuid4().hex)
+    if not run_id:
+        run_id = str(uuid.uuid4().hex)
     dataset_records = list()
     model_records = list()
     result_records = list()
@@ -92,11 +105,17 @@ def run_random_pipelines(data_path, target, problem_type, num_of_data_pipelines 
                 traceback.print_exc()
             result_records.append(rec)
 
+    if os.path.exists('{path}/{run_id}.json'.format(path=path, run_id=run_id)):
+        with open('{path}/{run_id}.json'.format(path=path, run_id=run_id), 'r') as f:
+            past_results = json.load(f)
+            model_records.extend(past_results['models'])
+            dataset_records.extend(past_results['datasets'])
+            result_records.extend(past_results['results'])
+
     with open('{path}/{run_id}.json'.format(path=path, run_id=run_id), 'w') as f:
         json.dump({'models': model_records,
                    'datasets': dataset_records,
-                   'results': result_records,
-                   'runtime': time.time() - start_time}, f)
+                   'results': result_records}, f)
 
 
 if __name__ == '__main__':

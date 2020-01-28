@@ -13,17 +13,35 @@ pd_numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
 numerical_sentinel = -999999999
 string_sentinel = '-999999999'
 other_category_filler = 'other_category_filler'
-
+temp_col = 'temp_col'
 
 def clean_text(s):
     return re.sub(r'\W+', '_', str(s))
 
 
+def get_col_description_dict(s):
+    d = dict()
+    if s.dtype in pd_numerics:
+        d['nan_count'] = int(s.isna().sum())
+        d['mean'] = float(s.mean())
+        d['min'] = float(s.min())
+        d['max'] = float(s.max())
+        d['median'] = float(s.median())
+        d['skew'] = float(s.skew())
+        d['perc_unique'] = (int(s.nunique()) - 1)/max(s.shape)
+        d['perc_of_values_mode'] = s.value_counts(normalize=True, dropna=False).iloc[0]
+        d['mode'] = s.value_counts(normalize=True, dropna=False).index[0]
+        d['kurtosis'] = stats.kurtosis(s.dropna().tolist())
+    else:
+        d['nan_count'] = int(s.isna().sum())
+        d['nunique'] = int(s.nunique())
+        d['perc_of_values_mode'] = s.value_counts(normalize=True, dropna=False).iloc[0]
+        d['mode'] = s.value_counts(normalize=True, dropna=False).index[0]
+    return d
+
+
 def get_dataset_description(df, target, original_columns):
     dataset_profile = dict()
-
-    feature_col_counter = 0
-
 
     if df[target].dtype in pd_numerics:
         target_type = 'numeric'
@@ -31,7 +49,12 @@ def get_dataset_description(df, target, original_columns):
         target_type = 'string'
 
     dataset_profile['columns'] = dict()
-    for i in df.columns:
+
+    if temp_col in df.columns:
+        df = df.drop(temp_col, axis=1)
+
+    df_columns = df.columns.tolist()
+    for i in df_columns:
         dataset_profile['columns'][i] = dict()
         if i == target:
             dataset_profile['columns'][i]['target'] = 1
@@ -42,37 +65,70 @@ def get_dataset_description(df, target, original_columns):
             dataset_profile['columns'][i]['original_column'] = 1
         else:
             dataset_profile['columns'][i]['original_column'] = 0
-            feature_col_counter += 1
 
         if df[i].dtype in pd_numerics:
             dataset_profile['columns'][i]['type'] = 'numeric'
-            dataset_profile['columns'][i]['nan_count'] = int(df[i].isna().sum())
-            dataset_profile['columns'][i]['mean'] = float(df[i].mean())
-            dataset_profile['columns'][i]['min'] = float(df[i].min())
-            dataset_profile['columns'][i]['max'] = float(df[i].max())
-            dataset_profile['columns'][i]['median'] = float(df[i].median())
-            dataset_profile['columns'][i]['skew'] = float(df[i].skew())
-            dataset_profile['columns'][i]['nunique'] = int(df[i].nunique())
+            dataset_profile['columns'][i].update(get_col_description_dict(df[i]))
             dataset_profile['columns'][i]['perc_of_values_mode'] = df[i].value_counts(normalize=True, dropna=False).iloc[0]
+
             if target_type == 'numeric':
-                _, _, r_value, _, _ = stats.linregress(df[i], df[target])
+                slope, intercept, r_value, p_value, std_err = stats.linregress(df[i], df[target])
+                dataset_profile['columns'][i]['target_slope'] = slope
+                dataset_profile['columns'][i]['target_intercept'] = intercept
                 dataset_profile['columns'][i]['target_r_value'] = r_value
+                dataset_profile['columns'][i]['target_p_value'] = p_value
+                dataset_profile['columns'][i]['target_std_err'] = std_err
+
             else:
-                dataset_profile['columns'][i]['target_r_value'] = None
+                unique_values = set(df[target])
+                value_mapping = {k: n for n, k in enumerate(unique_values)}
+                df[temp_col] = df[target].replace(value_mapping).astype(int)
+                subsets = [df[df[temp_col] == temp_target_value][i].tolist()
+                           for temp_target_value in list(value_mapping.values())]
+                f_stat, p_value = stats.f_oneway(*subsets)
+                dataset_profile['columns'][i]['target_p_value'] = p_value
+                dataset_profile['columns'][i]['target_f_stat'] = f_stat
 
         else:
             dataset_profile['columns'][i]['type'] = 'string'
-            dataset_profile['columns'][i]['nan_count'] = int(df[i].isna().sum())
-            dataset_profile['columns'][i]['nunique'] = int(df[i].nunique())
-            dataset_profile['columns'][i]['perc_of_values_mode'] = df[i].value_counts(normalize=True, dropna=False).iloc[0]
+            dataset_profile['columns'][i].update(get_col_description_dict(df[i]))
+
+            if target_type == 'numeric':
+                unique_values = set(df[i])
+                value_mapping = {k: n for n, k in enumerate(unique_values)}
+                df[temp_col] = df[i].replace(value_mapping).astype(int)
+                subsets = [df[df[temp_col] == temp_target_value][target].tolist() for temp_target_value in list(value_mapping.values())]
+                f_stat, p_value = stats.f_oneway(*subsets)
+                dataset_profile['columns'][i]['target_p_value'] = p_value
+                dataset_profile['columns'][i]['target_f_stat'] = f_stat
+
+            else:
+                unique_values_col = set(df[i])
+                unique_values_target = set(df[target])
+
+                value_mapping_col = {k: n + 1 for n, k in enumerate(unique_values_col)}
+                value_mapping_target = {k: n + 1 for n, k in enumerate(unique_values_target)}
+
+                temp_col_s = df[i].replace(value_mapping_col).astype(int).tolist()
+                temp_target_s = df[target].replace(value_mapping_target).astype(int).tolist()
+
+                chi_stat, p_value = stats.chisquare(temp_col_s, temp_target_s)
+                dataset_profile['columns'][i]['target_p_value'] = p_value
+                dataset_profile['columns'][i]['target_chi_stat'] = chi_stat
+
+    original_columns_df = pd.DataFrame.from_dict([i for i in list(dataset_profile['columns'].values()) if i['original_column'] == 0])
 
     dataset_profile['general'] = {
         'rows': df.shape[0],
         'columns': df.shape[1],
-        'feature_columns':feature_col_counter
-    }
+        'feature_columns_size':original_columns_df.shape[0]}
 
-
+    if original_columns_df.shape[0] > 0:
+        for i in original_columns_df.columns.tolist():
+            if original_columns_df[i].dtype in pd_numerics and original_columns_df[i].nunique() > 1:
+                col_d = get_col_description_dict(original_columns_df[i])
+                for k, v in col_d.items():
+                    dataset_profile['general']['{0}_{1}'.format(i, k)] = v
     return dataset_profile
 
 
@@ -124,6 +180,7 @@ class DataSet:
             self.initial_columns = self.train_data.columns.tolist()
             self.initial_dataset_description = get_dataset_description(self.train_data, self.target,
                                                                        self.initial_columns)
+            print(self.initial_dataset_description)
 
         else:
             raise NotImplementedError
@@ -176,6 +233,7 @@ class DataSet:
             input_column_descriptions.append(dataset_description['columns'][i])
 
         self.transformation_record.append({'input_column_descriptions': input_column_descriptions,
+                                           'general_description': dataset_description['general'],
                                            'dataset_id': self.dataset_id,
                                            'datapath': self.data_path,
                                            'transformation_type': transformation_obj.transformation_type,
@@ -184,6 +242,7 @@ class DataSet:
     def apply_n_random_transformations(self, n):
         for iteration in range(n):
             dataset_description = get_dataset_description(self.train_data, self.target, self.initial_columns)
+            print(dataset_description)
             transformation_objs = get_n_random_transformations(dataset_description, 1)
             transformation_obj = transformation_objs[0]
             self.apply_transformation(transformation_obj, dataset_description)
@@ -204,11 +263,11 @@ class DataSet:
 
 
 if __name__ == '__main__':
-    path = '/home/td/Documents/datasets/housing_prices/train.csv'
+    path = r'C:\Users\TristanDelforge\Documents\data_files\mushroom-classification/mushrooms.csv'
 
     d = DataSet()
-    d.load_data(path, target='SalePrice')
-    d.apply_n_random_transformations(10)
+    d.load_data(path, target='class')
+    d.apply_n_random_transformations(100)
     train_x, train_y = d.get_train_data()
     recs = d.transformation_record
     a = 1
