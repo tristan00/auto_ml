@@ -12,8 +12,13 @@ import math
 import json
 import time
 import os
+import gc
+import copy
 
 
+
+def build_past_result_dataset(data_path, target, metric, ):
+    pass
 
 
 def run_data_pipeline_value_predictions(data_path, target, problem_type,
@@ -37,7 +42,7 @@ def run_data_pipeline_value_predictions(data_path, target, problem_type,
         Model parameters + current feature description are the state,the transformation description is the action.
         Train a model to estimate a loss metric given a state and action.
         For each iteration step:
-            Rank model parameters based on avg past results + time decay
+            Rank model parameters based on avg past results + time decay. Use gittins index or similar.
             Pick new model param: Epsilon prob of picking a random model parameter. Else take one of the best model parameters so far.
             Load fresh dataset.
             For each transformation:
@@ -62,8 +67,26 @@ def run_data_pipeline_value_predictions(data_path, target, problem_type,
     with open('/home/td/Documents/datasets/auto_ml/1.json', 'r') as f:
         past_results = json.load(f)
 
+def run_genetic_data_pipeline(data_path, target):
+    '''
 
-def run_random_pipelines(data_path, target, problem_type, run_id = None, iteration_num = None, num_of_data_pipelines = 10, num_of_model_parameters = 10, prob_of_ending_transformations = .1):
+    Run a fully random set of transformation pipelines and model parameters to create initial dataset.
+    For each iteration:
+        Take best n data pipelines. Generate groups of these pipelines.
+
+
+    '''
+
+
+
+def run_random_pipelines(data_path, target, problem_type, run_id = None,
+                         iteration_num = None,
+                         num_of_data_pipelines = 10,
+                         num_of_model_parameters = 10,
+                         prob_of_ending_transformations = .1,
+                         max_num_of_transformations = 100,
+                         output_path = None):
+    gc.collect()
     start_time = time.time()
     if not run_id:
         run_id = str(uuid.uuid4().hex)
@@ -72,25 +95,33 @@ def run_random_pipelines(data_path, target, problem_type, run_id = None, iterati
     result_records = list()
     datasets = list()
 
-    for i in range(num_of_data_pipelines):
-        d = DataSet()
-        d.load_data(data_path, target=target)
-        datasets.append(d)
+    print('Loading data: {}'.format(time.time() - start_time))
 
-    print('data loaded')
-    for d in datasets:
-        while True:
+    for i in range(num_of_data_pipelines):
+        if not datasets:
+            d = DataSet()
+            d.load_data(data_path, target=target)
+            datasets.append(d)
+        else:
+            datasets.append(copy.deepcopy(datasets[0]))
+        print('Data loaded: {0} of {1}, {2}'.format(len(datasets), num_of_data_pipelines, time.time() - start_time))
+    print()
+
+    print('Applying transformations')
+    for n, d in enumerate(datasets):
+        for i in range(max_num_of_transformations):
             d.apply_n_random_transformations(1)
-            dataset_records.append(d.transformation_record)
             if random.random() < prob_of_ending_transformations:
                 break
+        dataset_records.append(d.transformation_record)
+        print('{0} transformations applied to data pipeline {1} of {2}'.format(i, n, num_of_data_pipelines))
+    print()
 
-    print('transformations loaded')
     models = get_n_random_models(problem_type, num_of_model_parameters)
     for m in models:
         model_records.append(m.get_model_description())
 
-    print('start')
+    print('starting model fitting')
     for d in datasets:
         x_train, y_train = d.get_train_data()
         x_val, y_val = d.get_validation_data()
@@ -112,25 +143,30 @@ def run_random_pipelines(data_path, target, problem_type, run_id = None, iterati
                 traceback.print_exc()
             result_records.append(rec)
 
-    if os.path.exists('{path}/{run_id}.json'.format(path=path, run_id=run_id)):
-        with open('{path}/{run_id}.json'.format(path=path, run_id=run_id), 'r') as f:
+    if os.path.exists('{path}/{run_id}.json'.format(path=output_path, run_id=run_id)):
+        with open('{path}/{run_id}.json'.format(path=output_path, run_id=run_id), 'r') as f:
             past_results = json.load(f)
             model_records.extend(past_results['models'])
             dataset_records.extend(past_results['datasets'])
             result_records.extend(past_results['results'])
 
-    with open('{path}/{run_id}.json'.format(path=path, run_id=run_id), 'w') as f:
+    with open('{path}/{run_id}.json'.format(path=output_path, run_id=run_id), 'w') as f:
         json.dump({'models': model_records,
                    'datasets': dataset_records,
                    'results': result_records}, f)
+    print('finished')
+    print()
+    print()
 
 
 if __name__ == '__main__':
     for i in range(1000):
-        run_random_pipelines('/home/td/Documents/datasets/housing_prices/train.csv',
-                             'SalePrice',
+        run_random_pipelines(r'C:\Users\TristanDelforge\Documents\data_files\stackoverflow_survey_clean.csv',
+                             'ConvertedSalary',
                              'regression',
                              num_of_data_pipelines=10,
                              num_of_model_parameters=10,
                              prob_of_ending_transformations=.1,
-                             run_id = 1)
+                             max_num_of_transformations = 20,
+                             run_id = 7,
+                             output_path = r'C:\Users\TristanDelforge\Documents\data_files')

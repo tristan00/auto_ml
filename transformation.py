@@ -11,22 +11,22 @@ from common import pick_parameter, string_sentinel
 def get_possible_transformations():
     transformations_dict = dict()
     transformations_dict['sum'] = {'min_columns': 2,
-                                   'max_columns': 4,
+                                   'max_columns': 2,
                                    'input_type': ['numeric'],
                                    'output_columns': 1,
                                    'parameters': list()}
     transformations_dict['var'] = {'min_columns': 2,
-                                   'max_columns': 4,
+                                   'max_columns': 2,
                                    'input_type': ['numeric'],
                                    'output_columns': 1,
                                    'parameters': list()}
-    transformations_dict['median'] = {'min_columns': 2,
-                                   'max_columns': 4,
+    transformations_dict['median'] = {'min_columns': 1,
+                                   'max_columns': 1,
                                    'input_type': ['numeric'],
                                    'output_columns': 1,
                                    'parameters': list()}
     transformations_dict['product'] = {'min_columns': 2,
-                                       'max_columns': 4,
+                                       'max_columns': 2,
                                        'input_type': ['numeric'],
                                        'output_columns': 1,
                                        'parameters': list()}
@@ -36,12 +36,12 @@ def get_possible_transformations():
                                           'output_columns': 1,
                                           'parameters': list()}
     transformations_dict['min'] = {'min_columns': 2,
-                                   'max_columns': 4,
+                                   'max_columns': 2,
                                    'input_type': ['numeric'],
                                    'output_columns': 1,
                                    'parameters': []}
     transformations_dict['max'] = {'min_columns': 2,
-                                   'max_columns': 4,
+                                   'max_columns': 2,
                                    'input_type': ['numeric'],
                                    'output_columns': 1,
                                    'parameters': []}
@@ -52,7 +52,7 @@ def get_possible_transformations():
                                         'output_columns': 1,
                                         'parameters': []}
     transformations_dict['pca'] = {'min_columns': 2,
-                                   'max_columns': 8,
+                                   'max_columns': 2,
                                    'input_type': ['numeric'],
                                    'output_columns': 'input',
                                    'parameters': []}
@@ -85,7 +85,7 @@ def get_possible_transformations():
                                                 'max_columns': 1,
                                                 'input_type': ['string', 'numeric'],
                                                 'output_columns': 'param',
-                                                'parameters': [{'name': 'output_cols',
+                                                'parameters': [{'name': 'num_of_output_columns',
                                                                 'selection_type': 'int_range',
                                                                 'options': [2, 50],
                                                                 'link': 'output_columns'}]}
@@ -154,9 +154,9 @@ def get_possible_transformations():
                                                  'input_type': ['string'],
                                                  'output_columns': 'param',
                                                  'parameters': bow_params}
-    del transformations_dict['TextBOWVectorizer']
+    # del transformations_dict['TextBOWVectorizer']
     del transformations_dict['clustering']
-    del transformations_dict['one_hot_encoding']
+    # del transformations_dict['one_hot_encoding']
     return transformations_dict
 
 
@@ -197,7 +197,7 @@ def get_random_transformation(dataset_description, name):
     output_columns = ['{0}_{1}'.format(name, i) for i in range(num_of_output_columns)]
 
     for i in transformation_dict[transformation_type]['parameters']:
-        if i in transformation_parameters.keys():
+        if i['name'] in transformation_parameters.keys():
             continue
         transformation_parameters[i['name']] = pick_parameter(i['options'], i['selection_type'])
 
@@ -326,6 +326,8 @@ class Transformation:
         self.input_columns = input_columns
         self.output_columns = output_columns
         self.model = None
+        self.transformation_id = str(uuid.uuid4().hex)
+        # print(transformation_type, transformation_parameters, input_columns, output_columns)
 
     def fit(self, df):
         if self.transformation_type in ['quantile_scaler', 'standard_scaler', 'power_transform']:
@@ -356,6 +358,14 @@ class Transformation:
 
         if self.transformation_type in ['dictionary_encode']:
             self.model = DictionaryEncoder()
+            self.model.fit(df[self.input_columns[0]])
+
+        if self.transformation_type in ['one_hot_encoding']:
+            self.model = OHE(**self.transformation_parameters)
+            self.model.fit(df[self.input_columns[0]])
+
+        if self.transformation_type in ['TextBOWVectorizer']:
+            self.model = TextBOWVectorizer(self.transformation_parameters)
             self.model.fit(df[self.input_columns[0]])
 
     def transform(self, df):
@@ -391,8 +401,27 @@ class Transformation:
             df = pd.concat([df, temp_df], axis=1)
         elif self.transformation_type in ['dictionary_encode']:
             df[self.output_columns[0]] = self.model.transform(df[self.input_columns[0]])
+        elif self.transformation_type in ['one_hot_encoding']:
+            temp_data = self.model.transform(df[self.input_columns[0]])
+            temp_df = pd.DataFrame(data=temp_data,
+                                   index=df.index,
+                                   columns=self.output_columns)
+            df = pd.concat([df, temp_df], axis=1)
+        elif self.transformation_type in ['TextBOWVectorizer']:
+            temp_data = self.model.transform(df[self.input_columns[0]])
+            temp_df = pd.DataFrame(data=temp_data,
+                                   index=df.index,
+                                   columns=self.output_columns)
+            df = pd.concat([df, temp_df], axis=1)
+
         else:
             raise NotImplementedError
+
+        try:
+            assert not df[self.output_columns].isna().sum().sum()
+        except:
+            print(df[self.output_columns].isna().sum().tolist(), self.transformation_type, self.transformation_parameters, self.input_columns, self.output_columns)
+
         return df
 
 

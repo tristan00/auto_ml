@@ -1,6 +1,8 @@
 import random
 import re
 from sklearn import metrics
+import traceback
+
 pd_numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
 numerical_sentinel_neg = -999999999
 numerical_sentinel_pos = -999999999
@@ -41,8 +43,10 @@ def get_metrics(truth, preds, problem_type):
 
         try:
             mae = metrics.mean_absolute_error(truth, preds)
+
         except:
             mae = None
+            # traceback.print_exc()
 
         try:
             mse = metrics.mean_squared_error(truth, preds)

@@ -9,9 +9,12 @@ from transformation import get_n_random_transformations
 import time
 import uuid
 import copy
+import traceback
+
 
 pd_numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
 numerical_sentinel = -999999999
+numerical_sentinel_offset = 999
 string_sentinel = '-999999999'
 other_category_filler = 'other_category_filler'
 temp_col = 'temp_col'
@@ -23,27 +26,36 @@ def clean_text(s):
 def get_col_description_dict(s):
     d = dict()
     if s.dtype in pd_numerics:
-        d['nan_count'] = int(s.isna().sum())
+        # d['nan_count'] = int(s.isna().sum())
         d['mean'] = float(s.mean())
-        d['min'] = float(s.min())
-        d['max'] = float(s.max())
-        d['median'] = float(s.median())
+        # d['min'] = float(s.min())
+        # d['max'] = float(s.max())
+        # d['median'] = float(s.median())
+        d['var'] = float(s.skew())
         d['skew'] = float(s.skew())
         d['perc_unique'] = (int(s.nunique()) - 1)/max(s.shape)
-        d['perc_of_values_mode'] = float(s.value_counts(normalize=True, dropna=False).iloc[0])
-        d['mode'] = float(s.value_counts(normalize=True, dropna=False).index[0])
+        # d['perc_of_values_mode'] = float(s.value_counts(normalize=True, dropna=False).iloc[0])
+        # d['mode'] = float(s.value_counts(normalize=True, dropna=False).index[0])
         d['kurtosis'] = float(stats.kurtosis(s.dropna().tolist()))
     else:
-        d['nan_count'] = int(s.isna().sum())
+        # d['nan_count'] = int(s.isna().sum())
         d['nunique'] = int(s.nunique())
         d['perc_of_values_mode'] = float(s.value_counts(normalize=True, dropna=False).iloc[0])
-        d['mode'] = s.value_counts(normalize=True, dropna=False).index[0]
+        # d['mode'] = s.value_counts(normalize=True, dropna=False).index[0]
     return d
+
+
+def get_fixed_size_col_descriptions_dict(df, s_list, target):
+    col_descriptions = list()
+    for s in s_list:
+        pass
+
 
 
 class DataSet:
 
     def __init__(self):
+        self.applied_transformation_objs = list()
         self.transformation_record = list()
         self.output_columns = list()
         self.dataset_id = str(uuid.uuid4().hex)
@@ -116,10 +128,10 @@ class DataSet:
             else:
                 self.dataset_description['columns'][i]['target'] = 0
 
-            if i in self.initial_columns:
-                self.dataset_description['columns'][i]['original_column'] = 1
-            else:
-                self.dataset_description['columns'][i]['original_column'] = 0
+            # if i in self.initial_columns:
+            #     self.dataset_description['columns'][i]['original_column'] = 1
+            # else:
+            #     self.dataset_description['columns'][i]['original_column'] = 0
 
             if self.train_data[i].dtype in pd_numerics:
                 self.dataset_description['columns'][i]['type'] = 'numeric'
@@ -130,10 +142,10 @@ class DataSet:
                 if target_type == 'numeric':
                     slope, intercept, r_value, p_value, std_err = stats.linregress(self.train_data[i], self.train_data[self.target])
                     self.dataset_description['columns'][i]['target_slope'] = slope
-                    self.dataset_description['columns'][i]['target_intercept'] = intercept
+                    # self.dataset_description['columns'][i]['target_intercept'] = intercept
                     self.dataset_description['columns'][i]['target_r_value'] = r_value
                     self.dataset_description['columns'][i]['target_p_value'] = p_value
-                    self.dataset_description['columns'][i]['target_std_err'] = std_err
+                    # self.dataset_description['columns'][i]['target_std_err'] = std_err
 
                 else:
                     unique_values = set(self.train_data[self.target])
@@ -174,7 +186,7 @@ class DataSet:
                     self.dataset_description['columns'][i]['target_chi_stat'] = chi_stat
 
         original_columns_df = pd.DataFrame.from_dict(
-            [i for i in list(self.dataset_description['columns'].values()) if i['original_column'] == 0])
+            [i for i in list(self.dataset_description['columns'].values()) if i not in self.initial_columns])
         self.dataset_description['general'] = {
             'rows': self.train_data.shape[0],
             'columns': self.train_data.shape[1],
@@ -196,18 +208,20 @@ class DataSet:
                 continue
 
             if self.train_data[column_name].dtype in pd_numerics:
-                col_max = self.train_data[column_name].max() + 1
-                col_min = self.train_data[column_name].min() - 1
+                # col_max = self.train_data[column_name].max() + numerical_sentinel_offset
+                col_min = self.train_data[column_name].min() - numerical_sentinel_offset
+                if pd.isnull(col_min):
+                    col_min = 0
 
-                self.train_data['{}_nan_max'.format(column_name)] = self.train_data[column_name].fillna(col_max)
+                # self.train_data['{}_nan_max'.format(column_name)] = self.train_data[column_name].fillna(col_max)
                 self.train_data['{}_nan_min'.format(column_name)] = self.train_data[column_name].fillna(col_min)
 
-                self.validation_data['{}_nan_max'.format(column_name)] = self.validation_data[column_name].fillna(
-                    col_max)
+                # self.validation_data['{}_nan_max'.format(column_name)] = self.validation_data[column_name].fillna(
+                #     col_max)
                 self.validation_data['{}_nan_min'.format(column_name)] = self.validation_data[column_name].fillna(
                     col_min)
 
-                self.test_data['{}_nan_max'.format(column_name)] = self.test_data[column_name].fillna(col_max)
+                # self.test_data['{}_nan_max'.format(column_name)] = self.test_data[column_name].fillna(col_max)
                 self.test_data['{}_nan_min'.format(column_name)] = self.test_data[column_name].fillna(col_min)
 
             else:
@@ -234,19 +248,27 @@ class DataSet:
         for i in transformation_obj.input_columns:
             input_column_descriptions.append(self.dataset_description['columns'][i])
 
-        self.transformation_record.append({'input_column_descriptions': copy.deepcopy(input_column_descriptions),
-                                           'general_description': copy.deepcopy(self.dataset_description['general']),
+        new_record = {'input_column_descriptions': input_column_descriptions,
+                                           'general_description': self.dataset_description['general'],
                                            'dataset_id': self.dataset_id,
+                                           'transformation_id': transformation_obj.transformation_id,
                                            'datapath': self.data_path,
                                            'transformation_type': transformation_obj.transformation_type,
-                                           'transformation_parameters': transformation_obj.transformation_parameters})
+                                           'transformation_parameters': transformation_obj.transformation_parameters}
+        self.transformation_record.append(copy.deepcopy(new_record))
+        self.applied_transformation_objs.append(transformation_obj)
 
     def apply_n_random_transformations(self, n):
         for iteration in range(n):
-            self.get_dataset_description()
-            transformation_objs = get_n_random_transformations(self.dataset_description, 1)
-            transformation_obj = transformation_objs[0]
-            self.apply_transformation(transformation_obj)
+            while True:
+                try:
+                    self.get_dataset_description()
+                    transformation_objs = get_n_random_transformations(self.dataset_description, 1)
+                    transformation_obj = transformation_objs[0]
+                    self.apply_transformation(transformation_obj)
+                    break
+                except:
+                    traceback.print_exc()
 
     def get_n_random_transformations(self, n):
         dataset_description = self.get_dataset_description()

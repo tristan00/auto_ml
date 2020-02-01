@@ -43,6 +43,7 @@ def get_possible_models(problem_type, num_of_classes = None):
                                               'options': [10, 100]},
 
         ]
+        # del model_param_dict['ElasticNet']
     elif problem_type == 'classification':
         model_param_dict['LGBMRegressor'] = [{'name': 'objective',
                                               'selection_type': 'choice',
@@ -88,6 +89,7 @@ class Model():
         self.model_params = model_params
         self.model_id = str(uuid.uuid4().hex)
 
+
         if self.model_type == 'ElasticNet':
             self.model = linear_model.ElasticNet(**self.model_params)
         if self.model_type == 'RandomForestRegressor':
@@ -107,7 +109,7 @@ class Model():
         if self.model_type in ['RandomForestRegressor', 'ElasticNet', 'SGDRegressor', 'GradientBoostingRegressor']:
             return self.model.predict(x)
         elif self.model_type in ['LGBMRegressor']:
-            self.model.predict(x)
+            return self.model.predict(x)
         else:
             raise NotImplementedError
 
@@ -115,3 +117,5 @@ class Model():
         return {'model_id':self.model_id,
                 'model_type':self.model_type,
                 'model_params':self.model_params}
+
+
