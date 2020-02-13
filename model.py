@@ -82,7 +82,7 @@ def get_n_random_models(problem_type, n):
     return [get_random_model(problem_type) for _ in range(n)]
 
 
-class Model():
+class Model:
 
     def __init__(self, model_type, model_params):
         self.model_type = model_type
@@ -114,8 +114,13 @@ class Model():
             raise NotImplementedError
 
     def get_model_description(self):
-        return {'model_id':self.model_id,
-                'model_type':self.model_type,
-                'model_params':self.model_params}
+        temp_dict =  {'model_id':self.model_id,
+                'model_type':self.model_type}
+
+        model_param_dict = {'model_params_{}'.format(k):v for k, v in self.model_params.items()}
+        temp_dict.update(model_param_dict)
+        return temp_dict
+
+
 
 

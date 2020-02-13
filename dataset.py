@@ -50,6 +50,50 @@ def get_fixed_size_col_descriptions_dict(df, s_list, target):
     for s in s_list:
         pass
 
+def get_column_relation_description(df, col1, col2, col1_type, col2_type):
+    relation_description = dict()
+    if col1_type == 'numeric' and col2_type == 'numeric':
+        slope, intercept, r_value, p_value, std_err = stats.linregress(df[col1], df[col2])
+        relation_description['slope'] = slope
+        relation_description['r_value'] = r_value
+        relation_description['p_value'] = p_value
+
+    elif (col1_type != 'numeric' and col2_type == 'numeric'):
+        unique_values =set(df[col1])
+        subsets = [df[df[col1] == temp_target_value][col2].tolist()
+                   for temp_target_value in list(unique_values)]
+        f_stat, p_value = stats.f_oneway(*subsets)
+        relation_description['p_value'] = p_value
+        relation_description['f_stat'] = f_stat
+
+    elif (col1_type == 'numeric' and col2_type != 'numeric'):
+        unique_values =set(df[col1])
+        subsets = [df[df[col2] == temp_target_value][col1].tolist()
+                   for temp_target_value in list(unique_values)]
+        f_stat, p_value = stats.f_oneway(*subsets)
+        relation_description['p_value'] = p_value
+        relation_description['f_stat'] = f_stat
+
+    elif (col1_type != 'numeric' and col2_type != 'numeric'):
+        unique_values_col1 = set(df[col1])
+        unique_values_col2 = set(df[col2])
+
+        value_mapping_col1 = {k: n + 1 for n, k in enumerate(unique_values_col1)}
+        value_mapping_col2 = {k: n + 1 for n, k in enumerate(unique_values_col2)}
+
+        temp_col1 = df[col1].replace(value_mapping_col1).astype(int).tolist()
+        temp_col2 = df[col2].replace(value_mapping_col2).astype(int).tolist()
+
+        chi_stat, p_value = stats.chisquare(temp_col1, temp_col2)
+        relation_description['p_value'] = p_value
+        relation_description['chi_stat'] = chi_stat
+
+    else:
+        raise NotImplementedError
+
+    return relation_description
+
+
 
 
 class DataSet:
@@ -200,7 +244,6 @@ class DataSet:
                         self.dataset_description['general']['{0}_{1}'.format(i, k)] = v
         self.dataset_description =  copy.deepcopy(self.dataset_description)
 
-
     def apply_nan_fill(self):
         columns = self.train_data.columns.tolist()
         for column_name in columns:
@@ -236,25 +279,44 @@ class DataSet:
             self.validation_data = self.validation_data.drop(column_name, axis=1)
             self.test_data = self.test_data.drop(column_name, axis=1)
 
-    def apply_transformation(self, transformation_obj):
-        transformation_obj.fit(self.train_data)
+    def apply_transformation(self, transformation_obj, fit_transformation = True):
+
+        if fit_transformation:
+            transformation_obj.fit(self.train_data)
+
         self.train_data = transformation_obj.transform(self.train_data)
         self.validation_data = transformation_obj.transform(self.validation_data)
         self.test_data = transformation_obj.transform(self.test_data)
         self.output_columns.extend(transformation_obj.output_columns)
         self.output_columns = sorted(list(set(self.output_columns)))
 
-        input_column_descriptions = list()
-        for i in transformation_obj.input_columns:
-            input_column_descriptions.append(self.dataset_description['columns'][i])
+        transformation_parameters = {'transformation_parameter_{}'.format(k):v for k, v in transformation_obj.transformation_parameters.items()}
 
-        new_record = {'input_column_descriptions': input_column_descriptions,
-                                           'general_description': self.dataset_description['general'],
-                                           'dataset_id': self.dataset_id,
-                                           'transformation_id': transformation_obj.transformation_id,
-                                           'datapath': self.data_path,
-                                           'transformation_type': transformation_obj.transformation_type,
-                                           'transformation_parameters': transformation_obj.transformation_parameters}
+        input_column_descriptions = dict()
+        for n, i in enumerate(transformation_obj.input_columns):
+            input_column_description_copy = {'input_column_{0}_{1}'.format(n, k):v for k, v in self.dataset_description['columns'][i].items()}
+            input_column_descriptions.update(input_column_description_copy)
+
+        for n1, i in enumerate(transformation_obj.input_columns):
+            for n2, j in enumerate(transformation_obj.input_columns):
+                if i == j or n1 > n2:
+                    continue
+                relation_dict = get_column_relation_description(self.train_data, i, j, self.dataset_description['columns'][i]['type'], self.dataset_description['columns'][j]['type'])
+                relation_dict = {'input_column_relation_{0}_{1}_{2}'.format(n1, n2, k): v for k, v in relation_dict.items()}
+                input_column_descriptions.update(relation_dict)
+
+        general_dataset_descriptions = {'general_dataset_description_{}'.format(k):v for k, v in self.dataset_description['general'].items()}
+
+
+        new_record = {'dataset_id': self.dataset_id,
+                      'transformation_id': transformation_obj.transformation_id,
+                      'datapath': self.data_path,
+                      'transformation_type': transformation_obj.transformation_type,
+                      }
+        new_record.update(transformation_parameters)
+        new_record.update(input_column_descriptions)
+        new_record.update(general_dataset_descriptions)
+
         self.transformation_record.append(copy.deepcopy(new_record))
         self.applied_transformation_objs.append(transformation_obj)
 
