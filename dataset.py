@@ -106,7 +106,14 @@ class DataSet:
         self.dataset_description = dict()
         self.dataset_description['columns'] = dict()
 
-    def load_data(self, data_path,
+    def get_copy(self):
+        next_dataset = copy.deepcopy(self)
+        next_dataset.dataset_id = str(uuid.uuid4().hex)
+        return next_dataset
+
+
+    def load_data(self, data_path = None,
+                  df = None,
                   data_format='csv',
                   validation_size=.2,
                   test_size=.2,
@@ -118,10 +125,13 @@ class DataSet:
         self.datasets = dict()
         if data_format == 'csv':
             self.target = target
-            if nrows:
-                self.raw_data = pd.read_csv(self.data_path, csv_sep, nrows=nrows)
+            if df is None:
+                if nrows:
+                    self.raw_data = pd.read_csv(self.data_path, csv_sep, nrows=nrows)
+                else:
+                    self.raw_data = pd.read_csv(self.data_path, csv_sep)
             else:
-                self.raw_data = pd.read_csv(self.data_path, csv_sep)
+                self.raw_data = df
 
             if target:
                 self.raw_data = self.raw_data[[target] + [i for i in self.raw_data.columns if i != target]]
@@ -163,6 +173,7 @@ class DataSet:
 
         df_columns = self.train_data.columns.tolist()
         for i in df_columns:
+            # print(i)
             if i in self.dataset_description.get('columns', dict()).keys():
                 continue
 
@@ -178,6 +189,10 @@ class DataSet:
             #     self.dataset_description['columns'][i]['original_column'] = 0
 
             if self.train_data[i].dtype in pd_numerics:
+                self.train_data[i] = self.train_data[i].astype(float)
+                self.validation_data[i] = self.validation_data[i].astype(float)
+                self.test_data[i] = self.test_data[i].astype(float)
+
                 self.dataset_description['columns'][i]['type'] = 'numeric'
                 self.dataset_description['columns'][i].update(get_col_description_dict(self.train_data[i]))
                 self.dataset_description['columns'][i]['perc_of_values_mode'] = \
@@ -202,6 +217,10 @@ class DataSet:
                     self.dataset_description['columns'][i]['target_f_stat'] = f_stat
 
             else:
+                self.train_data[i] = self.train_data[i].astype(str)
+                self.validation_data[i] = self.validation_data[i].astype(str)
+                self.test_data[i] = self.test_data[i].astype(str)
+
                 self.dataset_description['columns'][i]['type'] = 'string'
                 self.dataset_description['columns'][i].update(get_col_description_dict(self.train_data[i]))
 
@@ -247,25 +266,22 @@ class DataSet:
     def apply_nan_fill(self):
         columns = self.train_data.columns.tolist()
         for column_name in columns:
-            if column_name == self.target or not (self.train_data[column_name].isna().sum() or self.validation_data[column_name].isna().sum() or self.test_data[column_name].isna().sum()):
+            if column_name == self.target: #or not (self.train_data[column_name].isna().sum() or self.validation_data[column_name].isna().sum() or self.test_data[column_name].isna().sum()):
                 continue
 
             if self.train_data[column_name].dtype in pd_numerics:
                 # col_max = self.train_data[column_name].max() + numerical_sentinel_offset
-                col_min = self.train_data[column_name].min() - numerical_sentinel_offset
-                if pd.isnull(col_min):
-                    col_min = 0
 
                 # self.train_data['{}_nan_max'.format(column_name)] = self.train_data[column_name].fillna(col_max)
-                self.train_data['{}_nan_min'.format(column_name)] = self.train_data[column_name].fillna(col_min)
+                self.train_data['{}_nan_sentinel'.format(column_name)] = self.train_data[column_name].fillna(numerical_sentinel)
 
                 # self.validation_data['{}_nan_max'.format(column_name)] = self.validation_data[column_name].fillna(
                 #     col_max)
-                self.validation_data['{}_nan_min'.format(column_name)] = self.validation_data[column_name].fillna(
-                    col_min)
+                self.validation_data['{}_nan_sentinel'.format(column_name)] = self.validation_data[column_name].fillna(
+                    numerical_sentinel)
 
                 # self.test_data['{}_nan_max'.format(column_name)] = self.test_data[column_name].fillna(col_max)
-                self.test_data['{}_nan_min'.format(column_name)] = self.test_data[column_name].fillna(col_min)
+                self.test_data['{}_nan_sentinel'.format(column_name)] = self.test_data[column_name].fillna(numerical_sentinel)
 
             else:
                 self.train_data['{}_nan_sentinel'.format(column_name)] = self.train_data[column_name].fillna(
@@ -279,6 +295,42 @@ class DataSet:
             self.validation_data = self.validation_data.drop(column_name, axis=1)
             self.test_data = self.test_data.drop(column_name, axis=1)
 
+
+    def get_transformation_record(self, transformation_obj):
+        transformation_parameters = {'transformation_parameter_{}'.format(k): v for k, v in
+                                     transformation_obj.transformation_parameters.items()}
+
+        input_column_descriptions = dict()
+        for n, i in enumerate(transformation_obj.input_columns):
+            input_column_description_copy = {'input_column_{0}_{1}'.format(n, k): v for k, v in
+                                             self.dataset_description['columns'][i].items()}
+            input_column_descriptions.update(input_column_description_copy)
+
+        for n1, i in enumerate(transformation_obj.input_columns):
+            for n2, j in enumerate(transformation_obj.input_columns):
+                if i == j or n1 > n2:
+                    continue
+                relation_dict = get_column_relation_description(self.train_data, i, j,
+                                                                self.dataset_description['columns'][i]['type'],
+                                                                self.dataset_description['columns'][j]['type'])
+                relation_dict = {'input_column_relation_{0}_{1}_{2}'.format(n1, n2, k): v for k, v in
+                                 relation_dict.items()}
+                input_column_descriptions.update(relation_dict)
+
+        general_dataset_descriptions = {'general_dataset_description_{}'.format(k): v for k, v in
+                                        self.dataset_description['general'].items()}
+
+        new_record = {'dataset_id': self.dataset_id,
+                      'transformation_id': transformation_obj.transformation_id,
+                      'datapath': self.data_path,
+                      'transformation_type': transformation_obj.transformation_type,
+                      'transformation_count':len(self.applied_transformation_objs)
+                      }
+        new_record.update(transformation_parameters)
+        new_record.update(input_column_descriptions)
+        new_record.update(general_dataset_descriptions)
+        return new_record
+
     def apply_transformation(self, transformation_obj, fit_transformation = True):
 
         if fit_transformation:
@@ -290,33 +342,7 @@ class DataSet:
         self.output_columns.extend(transformation_obj.output_columns)
         self.output_columns = sorted(list(set(self.output_columns)))
 
-        transformation_parameters = {'transformation_parameter_{}'.format(k):v for k, v in transformation_obj.transformation_parameters.items()}
-
-        input_column_descriptions = dict()
-        for n, i in enumerate(transformation_obj.input_columns):
-            input_column_description_copy = {'input_column_{0}_{1}'.format(n, k):v for k, v in self.dataset_description['columns'][i].items()}
-            input_column_descriptions.update(input_column_description_copy)
-
-        for n1, i in enumerate(transformation_obj.input_columns):
-            for n2, j in enumerate(transformation_obj.input_columns):
-                if i == j or n1 > n2:
-                    continue
-                relation_dict = get_column_relation_description(self.train_data, i, j, self.dataset_description['columns'][i]['type'], self.dataset_description['columns'][j]['type'])
-                relation_dict = {'input_column_relation_{0}_{1}_{2}'.format(n1, n2, k): v for k, v in relation_dict.items()}
-                input_column_descriptions.update(relation_dict)
-
-        general_dataset_descriptions = {'general_dataset_description_{}'.format(k):v for k, v in self.dataset_description['general'].items()}
-
-
-        new_record = {'dataset_id': self.dataset_id,
-                      'transformation_id': transformation_obj.transformation_id,
-                      'datapath': self.data_path,
-                      'transformation_type': transformation_obj.transformation_type,
-                      }
-        new_record.update(transformation_parameters)
-        new_record.update(input_column_descriptions)
-        new_record.update(general_dataset_descriptions)
-
+        new_record = self.get_transformation_record(transformation_obj)
         self.transformation_record.append(copy.deepcopy(new_record))
         self.applied_transformation_objs.append(transformation_obj)
 
@@ -333,18 +359,24 @@ class DataSet:
                     traceback.print_exc()
 
     def get_n_random_transformations(self, n):
-        dataset_description = self.get_dataset_description()
-        transformation_objs = get_n_random_transformations(dataset_description, n)
+        self.get_dataset_description()
+        transformation_objs = get_n_random_transformations(self.dataset_description, n)
         return transformation_objs
 
     def get_train_data(self):
         return self.train_data[self.output_columns], self.train_data[self.target]
 
     def get_validation_data(self):
-        return self.train_data[self.output_columns], self.train_data[self.target]
+        return self.validation_data[self.output_columns], self.validation_data[self.target]
 
     def get_test_data(self):
-        return self.train_data[self.output_columns], self.train_data[self.target]
+        return self.test_data[self.output_columns], self.test_data[self.target]
+
+    def get_all_data(self):
+        temp_df = pd.concat([self.train_data[self.output_columns + [self.target]],
+                   self.validation_data[self.output_columns + [self.target]],
+                   self.test_data[self.output_columns + [self.target]]])
+        return temp_df[self.output_columns], temp_df[self.target]
 
 
 if __name__ == '__main__':

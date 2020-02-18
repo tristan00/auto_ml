@@ -13,12 +13,12 @@ def get_possible_models(problem_type, num_of_classes = None):
     if problem_type == 'regression':
 
 
-        model_param_dict['ElasticNet'] = [{'name': 'alpha',
-                       'selection_type': 'float_range',
-                       'options': [0.0, 2.0]},
-                                 {'name': 'l1_ratio',
-                                  'selection_type': 'float_range',
-                                  'options': [0.0, 1.0]}]
+        # model_param_dict['ElasticNet'] = [{'name': 'alpha',
+        #                'selection_type': 'float_range',
+        #                'options': [0.0, 2.0]},
+        #                          {'name': 'l1_ratio',
+        #                           'selection_type': 'float_range',
+        #                           'options': [0.0, 1.0]}]
         # model_param_dict['RandomForestRegressor'] = [{'name': 'criterion',
         #                'selection_type': 'choice',
         #                'options': ['mse', 'mae']},
@@ -40,7 +40,7 @@ def get_possible_models(problem_type, num_of_classes = None):
                                               'options': [.01, .2]},
                                              {'name': 'n_estimators',
                                               'selection_type': 'int_range',
-                                              'options': [10, 100]},
+                                              'options': [10, 400]},
 
         ]
         # del model_param_dict['ElasticNet']
