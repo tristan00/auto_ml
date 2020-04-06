@@ -16,7 +16,7 @@ import time
 import os
 import gc
 import copy
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, QuantileTransformer
 import gc
 
 
@@ -34,9 +34,9 @@ def run_data_pipeline_q_value_predictions(data_path, target, problem_type,
                                         epsilon_decay = .1,
                                         starting_epsilon = .95,
                                         temp_dataset_path = '/tmp/meta_model_dataset.csv',
-                                        evaluation_metric = '',
+                                        evaluation_metric = 'mean_absolute_error',
                                         min_num_of_transformations = 8,
-                                        max_num_of_transformations = 64
+                                        max_num_of_transformations = 64,
                                         ):
     '''
     Algorithm:
@@ -178,7 +178,8 @@ def run_data_pipeline_q_value_predictions_simple(data_path, target, problem_type
                                         evaluation_metric = '',
                                         min_num_of_transformations = 8,
                                         max_num_of_transformations = 64,
-                                                 num_of_final_pipelines = 100
+                                                 num_of_final_pipelines = 100,
+                                                 start_time = None
                                         ):
     base_d = DataSet()
     base_d.load_data(data_path, target=target)
@@ -189,7 +190,8 @@ def run_data_pipeline_q_value_predictions_simple(data_path, target, problem_type
     model_records = list()
     dataset_records = list()
 
-    for _ in range(num_of_random_iterations):
+    for i in range(num_of_random_iterations):
+        print('random iteration: {}'.format(i))
         run_random_pipelines(data_path, target, problem_type,
                              base_dataset = base_d,
                              output_path=output_path,
@@ -199,6 +201,11 @@ def run_data_pipeline_q_value_predictions_simple(data_path, target, problem_type
                              min_num_of_transformations=min_num_of_transformations,
                              max_num_of_transformations=max_num_of_transformations,
                              start_time=start_time)
+        if i%100 == 0 and i > 0:
+            _, _, _, _ = fit_meta_model(
+                '{path}/{run_id}.json'.format(path=output_path, run_id=run_id),
+                temp_dataset_path,
+                evaluation_metric)
 
     with open('{path}/{run_id}.json'.format(path=output_path, run_id=run_id), 'r') as f:
         past_results = json.load(f)
@@ -207,86 +214,85 @@ def run_data_pipeline_q_value_predictions_simple(data_path, target, problem_type
     model_records.extend(past_results['models'])
     dataset_records.extend(past_results['datasets'])
 
-    while True:
-        meta_model, meta_model_transformation_objs, meta_model_columns, meta_model_starting_columns = fit_meta_model('{path}/{run_id}.json'.format(path=output_path, run_id=run_id),
-                   temp_dataset_path,
-                   evaluation_metric)
-        datasets = list()
-        for i in range(num_of_final_pipelines):
-            datasets.append(base_d.get_copy())
-            print('Data loaded: {0} of {1}, {2}'.format(len(datasets), num_of_data_pipelines, time.time() - start_time))
+    meta_model, meta_model_transformation_objs, meta_model_columns, meta_model_starting_columns = fit_meta_model('{path}/{run_id}.json'.format(path=output_path, run_id=run_id),
+               temp_dataset_path,
+               evaluation_metric)
+    datasets = list()
+    for i in range(num_of_final_pipelines):
+        datasets.append(base_d.get_copy())
+        print('Data loaded: {0} of {1}, {2}'.format(len(datasets), num_of_data_pipelines, time.time() - start_time))
 
-        models = get_n_random_models(problem_type, num_of_data_pipelines)
-        for m in models:
-            model_records.append(m.get_model_description())
+    models = get_n_random_models(problem_type, num_of_final_pipelines)
+    for m in models:
+        model_records.append(m.get_model_description())
 
-        for d in datasets:
-            chosen_model = models.pop()
-            chosen_model_description = chosen_model.get_model_description()
+    for d in datasets:
+        chosen_model = models.pop()
+        chosen_model_description = chosen_model.get_model_description()
 
-            predicted_loss = None
-            for _ in range(max_num_of_transformations):
-                try:
-                    possible_transformations = d.get_n_random_transformations(transformations_to_consider_per_step)
-                    transformation_features = [d.get_transformation_record(t) for t in possible_transformations]
-                    [i.update(chosen_model_description) for i in transformation_features]
-                    temp_df = pd.DataFrame.from_dict(transformation_features)
-                    for i in meta_model_starting_columns:
-                        if i not in temp_df.columns:
-                            temp_df[i] = 0
-
-                    temp_df['dummy_target'] = 0
-                    temp_dataset = DataSet()
-                    temp_dataset.load_data(df = temp_df, target='dummy_target')
-                    for t in meta_model_transformation_objs:
-                        temp_dataset.apply_transformation(t, fit_transformation=False)
-
-                    x, y = temp_dataset.get_all_data()
-                    x = x.sort_index()
-                    preds = meta_model.predict(x[meta_model_columns])
-
-                    if not predicted_loss:
-                        predicted_loss = preds.min()
-
-                    if predicted_loss < preds.min():
-                        break
-
-                    predicted_loss = min(predicted_loss, preds.min())
-
-                    chosen_transformation = possible_transformations[np.argmin(preds)]
-                    d.apply_transformation(chosen_transformation)
-                except:
-                    traceback.print_exc()
-
-            dataset_records.extend(d.transformation_record)
-            x_train, y_train = d.get_train_data()
-            x_val, y_val = d.get_validation_data()
-            x_test, y_test = d.get_test_data()
-            rec = {'model_id': chosen_model.model_id,
-                   'dataset_id': d.dataset_id,
-                   'problem_type': problem_type,
-                   'timestamp': time.time() - start_time}
+        predicted_loss = None
+        for _ in range(max_num_of_transformations):
             try:
-                chosen_model.fit(x_train, y_train)
-                val_preds = chosen_model.predict(x_val)
-                validation_metrics = get_metrics(y_val, val_preds, problem_type)
-                validation_metrics = {'validation_metrics_{}'.format(k): v for k, v in validation_metrics.items()}
-                rec.update(validation_metrics)
-                test_preds = chosen_model.predict(x_test)
-                test_metrics = get_metrics(y_test, test_preds, problem_type)
-                test_metrics = {'test_metrics_{}'.format(k): v for k, v in test_metrics.items()}
-                rec.update(test_metrics)
-                rec['success'] = 1
-            except:
-                rec['success'] = 0
-                traceback.print_exc()
-            result_records.append(rec)
+                possible_transformations = d.get_n_random_transformations(transformations_to_consider_per_step)
+                transformation_features = [d.get_transformation_record(t) for t in possible_transformations]
+                [i.update(chosen_model_description) for i in transformation_features]
+                temp_df = pd.DataFrame.from_dict(transformation_features)
+                for i in meta_model_starting_columns:
+                    if i not in temp_df.columns:
+                        temp_df[i] = 0
 
-        with open('{path}/{run_id}.json'.format(path=output_path, run_id=run_id), 'w') as f:
-            json.dump({'models': model_records,
-                       'datasets': dataset_records,
-                       'results': result_records}, f)
-        gc.collect()
+                temp_df['dummy_target'] = 0
+                temp_dataset = DataSet()
+                temp_dataset.load_data(df = temp_df, target='dummy_target')
+                for t in meta_model_transformation_objs:
+                    temp_dataset.apply_transformation(t, fit_transformation=False)
+
+                x, y = temp_dataset.get_all_data()
+                x = x.sort_index()
+                preds = meta_model.predict(x[meta_model_columns])
+
+                if not predicted_loss:
+                    predicted_loss = preds.min()
+
+                if predicted_loss < preds.min():
+                    break
+
+                predicted_loss = min(predicted_loss, preds.min())
+
+                chosen_transformation = possible_transformations[np.argmin(preds)]
+                d.apply_transformation(chosen_transformation)
+            except:
+                traceback.print_exc()
+
+        dataset_records.extend(d.transformation_record)
+        x_train, y_train = d.get_train_data()
+        x_val, y_val = d.get_validation_data()
+        x_test, y_test = d.get_test_data()
+        rec = {'model_id': chosen_model.model_id,
+               'dataset_id': d.dataset_id,
+               'problem_type': problem_type,
+               'timestamp': time.time() - start_time}
+        try:
+            chosen_model.fit(x_train, y_train)
+            val_preds = chosen_model.predict(x_val)
+            validation_metrics = get_metrics(y_val, val_preds, problem_type)
+            validation_metrics = {'validation_metrics_{}'.format(k): v for k, v in validation_metrics.items()}
+            rec.update(validation_metrics)
+            test_preds = chosen_model.predict(x_test)
+            test_metrics = get_metrics(y_test, test_preds, problem_type)
+            test_metrics = {'test_metrics_{}'.format(k): v for k, v in test_metrics.items()}
+            rec.update(test_metrics)
+            rec['success'] = 1
+        except:
+            rec['success'] = 0
+            traceback.print_exc()
+        result_records.append(rec)
+
+    with open('{path}/{run_id}.json'.format(path=output_path, run_id=run_id), 'w') as f:
+        json.dump({'models': model_records,
+                   'datasets': dataset_records,
+                   'results': result_records}, f)
+    gc.collect()
 
 
 def fit_meta_model(train_files_path,
@@ -301,18 +307,25 @@ def fit_meta_model(train_files_path,
     datasets_df = pd.DataFrame.from_dict(past_results['datasets'])
 
     print(results_df.columns.tolist())
+    print('validation_metrics_{}'.format(metric))
 
     merged_df = results_df[['validation_metrics_{}'.format(metric), 'model_id', 'dataset_id']].merge(datasets_df)
     merged_df = merged_df.merge(model_df)
 
     merged_df = merged_df.drop(['model_id', 'dataset_id', 'transformation_id'], axis = 1)
-
     merged_df = merged_df.replace(np.inf, np.nan)
     merged_df = merged_df.dropna(subset = ['validation_metrics_{}'.format(metric)])
 
-    s = StandardScaler()
-    merged_df['validation_metrics_{}'.format(metric)] = s.fit_transform(merged_df['validation_metrics_{}'.format(metric)].values.reshape((-1, 1)))
-    # merged_df.to_csv(temp_dataset_path, index = False, sep = '|')
+    df_l = list()
+    for i in set(merged_df['datapath']):
+        temp_df = merged_df[merged_df['datapath'] == i]
+        s = QuantileTransformer(output_distribution='normal')
+        temp_df['validation_metrics_{}'.format(metric)] = s.fit_transform(temp_df['validation_metrics_{}'.format(metric)].values.reshape((-1, 1)))
+        df_l.append(temp_df)
+
+    merged_df = pd.concat(df_l)
+    merged_df.to_csv(r'C:\Users\TristanDelforge\Documents\data_files\tmp_file.csv', index = False, sep = '|')
+
 
     d = DataSet()
     d.load_data(df = merged_df, target='validation_metrics_{}'.format(metric))
@@ -333,7 +346,7 @@ def fit_meta_model(train_files_path,
                  ['{}_dictionary_encoded'.format(k)])
             d.apply_transformation(t)
 
-    m = Model('LGBMRegressor', {'objective':'l2',
+    m = Model('LGBMRegressor', {'objective':'l1',
                     'boosting_type':'gbdt',
                    'num_leaves':64,
                    'learning_rate':.1,
@@ -445,29 +458,39 @@ def run_random_pipelines(data_path, target, problem_type,
 
 
 if __name__ == '__main__':
-    start_time = time.time()
-    run_data_pipeline_q_value_predictions_simple(r'/home/td/Documents/datasets/auto_ml/stackoverflow_survey_clean.csv',
-                                        'ConvertedSalary',
-                                        'regression',
-                                        output_path = r'/home/td/Documents/datasets/auto_ml/training_results',
-                                        run_id = 'q_value_predictions_simple',
-                                        num_of_random_iterations = 100,
-                                        num_of_data_pipelines = 10,
-                                        transformations_to_consider_per_step = 100,
-                                        temp_dataset_path = '/tmp/meta_model_dataset.csv',
-                                        evaluation_metric = 'mean_squared_error',
-                                        min_num_of_transformations = 32,
-                                        max_num_of_transformations = 32
-                                        )
+    datasets = [{'datapath': r'C:\Users\TristanDelforge\Documents\data_files/stackoverflow_survey_clean.csv',
+                                        'target': 'ConvertedSalary',
+                                        'type': 'regression'},
+                {'datapath': r'C:\Users\TristanDelforge\Documents\data_files\OnionOrNot_csv\OnionOrNot.csv',
+                 'target': 'label',
+                 'type': 'regression'},
+                {'datapath': r'C:\Users\TristanDelforge\Documents\data_files\nlp-getting-started\train.csv',
+                 'target': 'target',
+                 'type': 'regression'},
+                {'datapath': r'C:\Users\TristanDelforge\Documents\data_files\titanic\train.csv',
+                 'target': 'Survived',
+                 'type': 'regression'},
+                {'datapath': r'C:\Users\TristanDelforge\Documents\data_files\house-prices-advanced-regression-techniques\train.csv',
+                 'target': 'SalePrice',
+                 'type': 'regression'},
+                ]
 
-    # for i in range(1000):
-    #     run_random_pipelines(r'/home/td/Documents/datasets/auto_ml/stackoverflow_survey_clean.csv',
-    #                          'ConvertedSalary',
-    #                          'regression',
-    #                          num_of_data_pipelines=10,
-    #                          num_of_model_parameters=10,
-    #                          min_num_of_transformations = 8,
-    #                          max_num_of_transformations = 64,
-    #                          run_id = 'random_pipelines',
-    #                          output_path = r'/home/td/Documents/datasets/auto_ml/training_results',
-    #                          start_time = start_time)
+    start_time = time.time()
+
+    for i in range(1, 100):
+        for d in datasets:
+            run_data_pipeline_q_value_predictions_simple(d['datapath'],
+                                                d['target'],
+                                                d['type'],
+                                                output_path = r'C:\Users\TristanDelforge\Documents\data_files/auto_ml/training_results',
+                                                run_id = 'q_value_predictions_simple_8',
+                                                num_of_random_iterations = 10*i,
+                                                num_of_data_pipelines = 10,
+                                                transformations_to_consider_per_step = 10,
+                                                temp_dataset_path = '/tmp/meta_model_dataset.csv',
+                                                evaluation_metric = 'mean_absolute_error',
+                                                min_num_of_transformations = 2,
+                                                max_num_of_transformations = 64,
+                                                num_of_final_pipelines = 100,
+                                                start_time = start_time
+                                        )
